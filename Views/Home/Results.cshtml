@@ -1,11 +1,11 @@
 @model SleepVisualizationTool.Models.UploadResultViewModel
 @{
-    ViewData["Title"] = "Generated Sleep Charts";
+    ViewData["Title"] = "CSH Sleep Charts";
 }
 
 <div class="container py-5">
     <div class="row justify-content-center">
-        <div class="col-lg-8">
+        <div class="col-12">
             <h1 class="mb-3">Generated Sleep Charts</h1>
             <p class="text-muted">Job ID: <code>@Model.JobId</code></p>
 
@@ -15,6 +15,212 @@
                 </a>
                 <a asp-action="Index" class="btn btn-outline-secondary">Upload another file</a>
             </div>
+
+            @if (Model.HasVisualizations)
+            {
+                <section class="card mb-4">
+                    <div class="card-body">
+                        <h2 class="h5 mb-3">Interactive visualizations</h2>
+                        <div class="row g-4 align-items-start flex-lg-nowrap">
+                            <div class="col-lg-3">
+                                <div class="list-group person-selector" id="person-selector" role="tablist">
+                                    @for (var index = 0; index < Model.Visualizations.Count; index++)
+                                    {
+                                        var vis = Model.Visualizations[index];
+                                        var activeClass = index == 0 ? "active" : string.Empty;
+                                        <button type="button"
+                                                class="list-group-item list-group-item-action @activeClass"
+                                                data-target="vis-panel-@index">
+                                            @vis.Name
+                                        </button>
+                                    }
+                                </div>
+                            </div>
+                            <div class="col-lg-9">
+                                @for (var index = 0; index < Model.Visualizations.Count; index++)
+                                {
+                                    var vis = Model.Visualizations[index];
+                                    var hiddenClass = index == 0 ? string.Empty : "d-none";
+                                    <div id="vis-panel-@index" class="chart-panel @hiddenClass" data-person="@index" data-current-window="0">
+                                        <div class="d-flex flex-column flex-lg-row align-items-lg-center justify-content-lg-between mb-3 gap-3">
+                                            <div>
+                                                <h3 class="h5 mb-1">@vis.Name</h3>
+                                                <p class="text-muted mb-0 current-window-label">@vis.Windows[0].Label</p>
+                                            </div>
+                                            <div class="text-muted small">Select another name on the left to change view</div>
+                                        </div>
+                                        @if (vis.HasMultipleWindows)
+                                        {
+                                            <div class="d-flex align-items-center gap-2 flex-wrap window-controls mb-3">
+                                                <button type="button"
+                                                        class="btn btn-sm btn-outline-secondary window-nav"
+                                                        data-person="@index"
+                                                        data-direction="-1">
+                                                    &larr; Previous window
+                                                </button>
+                                                <div class="flex-grow-1">
+                                                    <select class="form-select form-select-sm window-selector" data-person="@index">
+                                                        @for (var wIndex = 0; wIndex < vis.Windows.Count; wIndex++)
+                                                        {
+                                                            var window = vis.Windows[wIndex];
+                                                            <option value="@wIndex">@window.Label</option>
+                                                        }
+                                                    </select>
+                                                </div>
+                                                <button type="button"
+                                                        class="btn btn-sm btn-outline-secondary window-nav"
+                                                        data-person="@index"
+                                                        data-direction="1">
+                                                    Next window &rarr;
+                                                </button>
+                                            </div>
+                                        }
+                                        @for (var wIndex = 0; wIndex < vis.Windows.Count; wIndex++)
+                                        {
+                                            var window = vis.Windows[wIndex];
+                                            var windowHidden = wIndex == 0 ? string.Empty : "d-none";
+                                            <div id="vis-panel-@index-window-@wIndex" class="window-panel @windowHidden">
+                                                <div class="chart-wrapper mb-3">
+                                                    <img src="@window.ChartDataUrl" class="img-fluid rounded border shadow-sm" alt="Sleep duration chart for @vis.Name (window @window.Label)" />
+                                                </div>
+                                                <ul class="list-unstyled small mb-0">
+                                                    @foreach (var line in window.SummaryLines)
+                                                    {
+                                                        <li>@line</li>
+                                                    }
+                                                </ul>
+                                            </div>
+                                        }
+                                    </div>
+                                }
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <script>
+                    (function () {
+                        const buttons = document.querySelectorAll('#person-selector [data-target]');
+                        const panels = document.querySelectorAll('.chart-panel');
+                        const selectors = document.querySelectorAll('.window-selector');
+                        const navButtons = document.querySelectorAll('.window-nav');
+
+                        function setWindow(personIndex, desiredIndex) {
+                            const panel = document.querySelector(`.chart-panel[data-person="${personIndex}"]`);
+                            if (!panel) return;
+
+                            const windows = panel.querySelectorAll('.window-panel');
+                            if (windows.length === 0) return;
+
+                            const count = windows.length;
+                            let targetIndex = desiredIndex ?? 0;
+                            targetIndex = ((targetIndex % count) + count) % count;
+
+                            windows.forEach((panelEl, idx) => panelEl.classList.toggle('d-none', idx !== targetIndex));
+                            panel.dataset.currentWindow = targetIndex.toString();
+
+                            const selector = panel.querySelector('.window-selector');
+                            if (selector) {
+                                selector.value = targetIndex.toString();
+                                if (selector.options.length > targetIndex) {
+                                    const label = panel.querySelector('.current-window-label');
+                                    if (label) {
+                                        label.textContent = selector.options[targetIndex].text;
+                                    }
+                                }
+                            }
+                        }
+
+                        selectors.forEach(select => {
+                            select.addEventListener('change', () => {
+                                const personIndex = select.dataset.person;
+                                if (personIndex === undefined) return;
+                                const targetIndex = parseInt(select.value, 10);
+                                if (Number.isNaN(targetIndex)) return;
+                                setWindow(personIndex, targetIndex);
+                            });
+                        });
+
+                        navButtons.forEach(btn => {
+                            btn.addEventListener('click', () => {
+                                const personIndex = btn.dataset.person;
+                                if (personIndex === undefined) return;
+                                const direction = parseInt(btn.dataset.direction ?? '0', 10);
+                                if (Number.isNaN(direction)) return;
+                                const panel = document.querySelector(`.chart-panel[data-person="${personIndex}"]`);
+                                const currentIndex = panel ? parseInt(panel.dataset.currentWindow ?? '0', 10) : 0;
+                                setWindow(personIndex, currentIndex + direction);
+                            });
+                        });
+
+                        function activate(targetId, sourceBtn) {
+                            buttons.forEach(other => other.classList.remove('active'));
+                            panels.forEach(panel => panel.classList.add('d-none'));
+
+                            if (sourceBtn) {
+                                sourceBtn.classList.add('active');
+                            } else {
+                                const first = document.querySelector(`#person-selector [data-target="${targetId}"]`);
+                                if (first) {
+                                    first.classList.add('active');
+                                }
+                            }
+
+                            const target = document.getElementById(targetId);
+                            if (target) {
+                                target.classList.remove('d-none');
+                                const personIndex = target.dataset.person ?? '0';
+                                setWindow(personIndex, 0);
+                                target.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                            }
+                        }
+
+                        buttons.forEach(btn => {
+                            btn.addEventListener('click', () => activate(btn.dataset.target, btn));
+                        });
+
+                        window.addEventListener('hashchange', () => {
+                            const anchor = window.location.hash.replace('#', '');
+                            if (!anchor) return;
+                            const btn = document.querySelector(`#person-selector [data-target="${anchor}"]`);
+                            if (btn) activate(anchor, btn);
+                        });
+
+                        if (window.location.hash) {
+                            const anchor = window.location.hash.replace('#', '');
+                            const btn = document.querySelector(`#person-selector [data-target="${anchor}"]`);
+                            if (btn) activate(anchor, btn);
+                        } else if (buttons.length > 0) {
+                            activate(buttons[0].dataset.target, buttons[0]);
+                        }
+                    })();
+                </script>
+
+                <style>
+                    .person-selector .list-group-item {
+                        cursor: pointer;
+                        padding: 0.75rem 1rem;
+                    }
+
+                    .chart-wrapper {
+                        background-color: #fff;
+                        padding: 1rem;
+                        border-radius: 0.75rem;
+                    }
+
+                    .chart-wrapper img {
+                        width: 100%;
+                        height: auto;
+                    }
+
+                    @@media (max-width: 992px) {
+                        .chart-wrapper {
+                            padding: 0.5rem;
+                        }
+                    }
+                </style>
+
+            }
 
             <h2 class="h5 mb-3">Individual PDFs (@Model.Count)</h2>
             <ul class="list-group">

@@ -1,3 +1,4 @@
+using System;
 using System.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
 using SleepVisualizationTool.Models;
@@ -10,15 +11,18 @@ public sealed class HomeController : Controller
     private readonly ILogger<HomeController> _logger;
     private readonly SleepCsvLoader _csvLoader;
     private readonly SleepPdfGenerator _pdfGenerator;
+    private readonly SleepChartRenderer _chartRenderer;
 
     public HomeController(
         ILogger<HomeController> logger,
         SleepCsvLoader csvLoader,
-        SleepPdfGenerator pdfGenerator)
+        SleepPdfGenerator pdfGenerator,
+        SleepChartRenderer chartRenderer)
     {
         _logger = logger;
         _csvLoader = csvLoader;
         _pdfGenerator = pdfGenerator;
+        _chartRenderer = chartRenderer;
     }
 
     [HttpGet]
@@ -46,6 +50,11 @@ public sealed class HomeController : Controller
             await using var stream = csv.OpenReadStream();
             records = await _csvLoader.LoadAsync(stream, cancellationToken);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            ModelState.AddModelError(string.Empty, "Upload was canceled before it could complete.");
+            return View("Index");
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to parse uploaded CSV.");
@@ -72,12 +81,58 @@ public sealed class HomeController : Controller
 
         var jobId = Guid.NewGuid().ToString("N");
         var fileNames = new List<string>();
+        var visualizations = new List<PersonVisualizationViewModel>();
 
         foreach (var group in groups)
         {
+            var personRecords = group.ToList();
+
             try
             {
-                var pdfPath = await _pdfGenerator.GeneratePersonPdfAsync(jobId, group.Key, group.ToList(), cancellationToken);
+                var overview = _chartRenderer.RenderOverview(group.Key, personRecords);
+                var windowSegments = _chartRenderer.BuildWindows(group.Key, personRecords);
+
+                var windowViewModels = new List<PersonVisualizationWindow>();
+                if (overview.HasChart)
+                {
+                    windowViewModels.Add(new PersonVisualizationWindow
+                    {
+                        Index = 0,
+                        Label = $"All history ({overview.WindowLabel})",
+                        ChartDataUrl = overview.ChartDataUrl,
+                        SummaryLines = overview.SummaryLines
+                    });
+                }
+
+                var nextIndex = windowViewModels.Count;
+                foreach (var segment in windowSegments)
+                {
+                    windowViewModels.Add(new PersonVisualizationWindow
+                    {
+                        Index = nextIndex++,
+                        Label = segment.WindowLabel,
+                        ChartDataUrl = $"data:image/png;base64,{Convert.ToBase64String(segment.ChartImage)}",
+                        SummaryLines = segment.SummaryLines
+                    });
+                }
+
+                if (windowViewModels.Count > 0)
+                {
+                    visualizations.Add(new PersonVisualizationViewModel
+                    {
+                        Name = group.Key,
+                        Windows = windowViewModels
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to render overview chart for {Person}.", group.Key);
+            }
+
+            try
+            {
+                var pdfPath = await _pdfGenerator.GeneratePersonPdfAsync(jobId, group.Key, personRecords, cancellationToken);
                 fileNames.Add(Path.GetFileName(pdfPath));
             }
             catch (Exception ex)
@@ -96,6 +151,7 @@ public sealed class HomeController : Controller
         {
             JobId = jobId,
             Files = fileNames,
+            Visualizations = visualizations.OrderBy(v => v.Name, StringComparer.OrdinalIgnoreCase).ToList(),
         };
 
         return View("Results", viewModel);
@@ -154,6 +210,7 @@ public sealed class HomeController : Controller
         {
             JobId = jobId,
             Files = files,
+            Visualizations = Array.Empty<PersonVisualizationViewModel>(),
         };
 
         return View("Results", vm);

@@ -1,6 +1,7 @@
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllersWithViews();
+builder.Services.AddSingleton<SleepVisualizationTool.Services.SleepChartRenderer>();
 builder.Services.AddSingleton<SleepVisualizationTool.Services.SleepCsvLoader>();
 builder.Services.AddSingleton<SleepVisualizationTool.Services.SleepPdfGenerator>();
 

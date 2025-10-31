@@ -15,14 +15,18 @@ Once running, open `https://localhost:5001` (or the console URL) and upload a CS
 - Raw `Name,Details` extracts (parses text to timestamps, interruptions, and durations)
 - Already-normalised `Name,start_dt,end_dt,duration_hr,interruptions` tables
 
-Each upload produces a unique job ID under `wwwroot/generated_pdfs/` containing per-person PDFs and a bundled ZIP download.
+Each upload now:
+
+- Presents an interactive chart for every individual in the browser (select their name to swap the visualization).
+- Generates per-person PDFs plus a ZIP download bundle.
+- Stores artifacts under the OS temp folder (`%TEMP%/SleepVisualizationTool/generated_pdfs` or the macOS/Linux equivalent), keeping the web root clean.
 
 ## Key Differences from Flask Version
 - **Framework**: ASP.NET Core MVC with Razor views replaces Flask + Jinja templates.
-- **Plotting**: Charts are generated with ScottPlot and embedded into PDFs using QuestPDF.
-- **Storage**: Job artefacts live under `wwwroot/generated_pdfs/` so they can be served via static file middleware.
+- **Plotting**: Charts are generated with ScottPlot, rendered inline in the UI, and embedded into PDFs using QuestPDF.
+- **Storage**: Job artefacts live under the system temp path (`{temp}/SleepVisualizationTool/generated_pdfs/`) and are streamed by MVC actions rather than exposed as static files.
 - **Dependency Handling**: Requires NuGet packages (`CsvHelper`, `ScottPlot`, `QuestPDF`). Restore them before building or running.
 
 ## Cleanup
 
-Job folders are not purged automatically. Remove old directories under `wwwroot/generated_pdfs/` as needed.
+Job folders are not purged automatically. Remove old directories from the temp folder periodically if disk usage matters.
