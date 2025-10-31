@@ -1,0 +1,31 @@
+@model SleepVisualizationTool.Models.UploadResultViewModel
+@{
+    ViewData["Title"] = "Generated Sleep Charts";
+}
+
+<div class="container py-5">
+    <div class="row justify-content-center">
+        <div class="col-lg-8">
+            <h1 class="mb-3">Generated Sleep Charts</h1>
+            <p class="text-muted">Job ID: <code>@Model.JobId</code></p>
+
+            <div class="mb-4 d-flex gap-2">
+                <a asp-action="DownloadAll" asp-route-jobId="@Model.JobId" class="btn btn-success">
+                    Download all as ZIP
+                </a>
+                <a asp-action="Index" class="btn btn-outline-secondary">Upload another file</a>
+            </div>
+
+            <h2 class="h5 mb-3">Individual PDFs (@Model.Count)</h2>
+            <ul class="list-group">
+                @foreach (var file in Model.Files)
+                {
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        <span>@file</span>
+                        <a asp-action="Download" asp-route-jobId="@Model.JobId" asp-route-fileName="@file" class="btn btn-link">Download</a>
+                    </li>
+                }
+            </ul>
+        </div>
+    </div>
+</div>

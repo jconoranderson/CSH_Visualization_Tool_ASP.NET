@@ -1,0 +1,29 @@
+@{
+    ViewData["Title"] = "Sleep Visualization Tool";
+}
+
+<div class="container py-5">
+    <div class="row justify-content-center">
+        <div class="col-lg-8">
+            <h1 class="mb-3">Sleep Visualization Tool</h1>
+            <p class="lead">
+                Upload a CSV export of nightly sleep details to generate per-person PDF charts and a downloadable archive.
+                The uploader accepts the raw <code>Name,Details</code> export or the pre-parsed format with
+                <code>Name,start_dt,end_dt,duration_hr,interruptions</code>.
+            </p>
+
+            <form asp-action="Upload" method="post" enctype="multipart/form-data" class="mt-4">
+                @Html.AntiForgeryToken()
+                <div asp-validation-summary="ModelOnly" class="text-danger mb-3"></div>
+                <div class="mb-3">
+                    <label for="csv" class="form-label">Sleep CSV</label>
+                    <input type="file" class="form-control" id="csv" name="csv" accept=".csv" required />
+                    <div class="form-text">
+                        The file is processed entirely on the server; generated PDFs remain under a unique job identifier.
+                    </div>
+                </div>
+                <button type="submit" class="btn btn-primary">Generate PDFs</button>
+            </form>
+        </div>
+    </div>
+</div>
