@@ -5,7 +5,7 @@ Rebuild of the original Flask-based “Sleep Plotter” as an ASP.NET Core MVC a
 ## Getting Started
 
 ```bash
-cd CSH_Sleep_Visualization_Tool_AspNet/SleepVisualizationTool
+cd /SleepVisualizationTool
 dotnet restore   # requires network access for CsvHelper, ScottPlot, QuestPDF
 dotnet run
 ```
