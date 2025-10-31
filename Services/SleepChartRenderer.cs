@@ -22,6 +22,7 @@ public sealed class SleepChartRenderer
 
         var ordered = records.OrderBy(r => r.StartDateTime).ToList();
         var ranges = BuildWindowsMostRecentFirst(ordered);
+        ranges.Reverse();
         var windows = new List<SleepChartWindow>();
 
         foreach (var (start, end) in ranges)
