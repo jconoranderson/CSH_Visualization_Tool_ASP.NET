@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 
 namespace SleepVisualizationTool.Models;
@@ -15,4 +16,8 @@ public sealed class PersonVisualizationWindow
     public required string Label { get; init; }
     public required string ChartDataUrl { get; init; }
     public required IReadOnlyList<string> SummaryLines { get; init; }
+    public required DateTime WindowStart { get; init; }
+    public required DateTime WindowEnd { get; init; }
+    public required IReadOnlyList<SleepChartPoint> Points { get; init; }
+    public required WindowStatistics Statistics { get; init; }
 }

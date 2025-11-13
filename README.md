@@ -7,7 +7,7 @@ Rebuild of the original Flask-based “Sleep Plotter” as an ASP.NET Core MVC a
 ```bash
 cd CSH_Sleep_Visualization_Tool_AspNet/
 dotnet restore   # requires network access for CsvHelper, ScottPlot, QuestPDF
-dotnet run
+dotnet run       # requires the .NET 8 SDK
 ```
 
 Once running, open `https://localhost:5001` (or the console URL) and upload a CSV exported from the source system. The app accepts:
@@ -25,7 +25,7 @@ Each upload now:
 - **Framework**: ASP.NET Core MVC with Razor views replaces Flask + Jinja templates.
 - **Plotting**: Charts are generated with ScottPlot, rendered inline in the UI, and embedded into PDFs using QuestPDF.
 - **Storage**: Job artefacts live under the system temp path (`{temp}/SleepVisualizationTool/generated_pdfs/`) and are streamed by MVC actions rather than exposed as static files.
-- **Dependency Handling**: Requires NuGet packages (`CsvHelper`, `ScottPlot`, `QuestPDF`). Restore them before building or running.
+- **Dependency Handling**: Targets .NET 8.0 with NuGet packages (`CsvHelper`, `ScottPlot`, `QuestPDF`). Restore them before building or running.
 
 ## Cleanup
 

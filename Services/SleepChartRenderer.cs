@@ -104,12 +104,18 @@ public sealed class SleepChartRenderer
         var durations = records.Select(r => r.DurationHours).Where(d => !double.IsNaN(d) && !double.IsInfinity(d)).ToArray();
         var avgDuration = durations.Length > 0 ? durations.Average() : (double?)null;
 
-        var interruptionNumbers = records
-            .Select(r => r.Interruptions)
-            .Where(v => v.HasValue)
+        var interruptionDurations = records
+            .SelectMany(r => r.GetInterruptionDurationsHours())
+            .Where(d => !double.IsNaN(d) && !double.IsInfinity(d) && d > 0)
+            .ToArray();
+        var avgInterruptionLength = interruptionDurations.Length > 0 ? interruptionDurations.Average() : (double?)null;
+
+        var interruptionCounts = records
+            .Select(r => r.GetInterruptionCount())
+            .Where(v => v.HasValue && v.Value > 0)
             .Select(v => v!.Value)
             .ToArray();
-        var avgInterruptions = interruptionNumbers.Length > 0 ? interruptionNumbers.Average() : (double?)null;
+        var avgInterruptionCount = interruptionCounts.Length > 0 ? interruptionCounts.Average() : (double?)null;
 
         var startMinutes = records.Select(r => (int?)((r.StartDateTime.Hour * 60) + r.StartDateTime.Minute)).ToList();
         var startMean = CircularMean(startMinutes);
@@ -144,7 +150,8 @@ public sealed class SleepChartRenderer
             WindowStart = windowStart,
             WindowEnd = windowEnd,
             AverageDurationHours = avgDuration,
-            AverageInterruptions = avgInterruptions,
+            AverageInterruptions = avgInterruptionLength,
+            AverageInterruptionCount = avgInterruptionCount,
             AverageStartMinutes = startMean,
             AverageEndMinutes = endMean,
             InterruptionStartMean = intrStartMean,
@@ -159,9 +166,9 @@ public sealed class SleepChartRenderer
             FormatStatsLine("Avg sleep", stats.AverageDurationHours),
             FormatClockLine("Avg start", stats.AverageStartMinutes),
             FormatClockLine("Avg end", stats.AverageEndMinutes),
-            FormatStatsLine("Avg interruptions", stats.AverageInterruptions),
-            FormatClockLine("Avg intr. start", stats.InterruptionStartMean),
-            FormatClockLine("Avg intr. end", stats.InterruptionEndMean)
+            FormatStatsLine("Avg intr. length", stats.AverageInterruptions),
+            FormatCountLine("Avg intr. total", stats.AverageInterruptionCount),
+            FormatClockLine("Avg intr. start", stats.InterruptionStartMean)
         };
     }
 
@@ -181,8 +188,49 @@ public sealed class SleepChartRenderer
 
         plot.Axes.Bottom.TickGenerator = new DateTimeAutomatic();
 
-        var scatter = plot.Add.Scatter(xs, ys, color: Color.FromHex("#2196F3"));
-        scatter.MarkerSize = 6;
+        var baseLine = plot.Add.Scatter(xs, ys, color: Color.FromHex("#64B5F6"));
+        baseLine.MarkerSize = 0;
+
+        var hadInterruptionColor = Color.FromHex("#1E88E5");
+        var noInterruptionColor = Color.FromHex("#FB8C00");
+        var noInterruptionXs = new List<double>();
+        var noInterruptionYs = new List<double>();
+        var interruptionXs = new List<double>();
+        var interruptionYs = new List<double>();
+
+        for (var i = 0; i < records.Count; i++)
+        {
+            var hasInterruptions = records[i].HasInterruptionEvidence();
+            if (hasInterruptions)
+            {
+                interruptionXs.Add(xs[i]);
+                interruptionYs.Add(ys[i]);
+            }
+            else
+            {
+                noInterruptionXs.Add(xs[i]);
+                noInterruptionYs.Add(ys[i]);
+            }
+        }
+
+        var hasNoInterruptionPoints = noInterruptionXs.Count > 0;
+        var hasInterruptionPoints = interruptionXs.Count > 0;
+
+        if (hasNoInterruptionPoints)
+        {
+            var cleanScatter = plot.Add.Scatter(noInterruptionXs, noInterruptionYs, color: noInterruptionColor);
+            cleanScatter.LineStyle.Width = 0;
+            cleanScatter.MarkerSize = 7;
+            cleanScatter.Label = "No Interruptions";
+        }
+
+        if (hasInterruptionPoints)
+        {
+            var intrScatter = plot.Add.Scatter(interruptionXs, interruptionYs, color: hadInterruptionColor);
+            intrScatter.LineStyle.Width = 0;
+            intrScatter.MarkerSize = 7;
+            intrScatter.Label = "Had Interruptions";
+        }
 
         var obsMin = xDates.Min().Date;
         var obsMax = xDates.Max().Date;
@@ -192,7 +240,12 @@ public sealed class SleepChartRenderer
             obsMax = obsMax.AddDays(3);
         }
 
-        plot.Axes.SetLimits(left: obsMin.ToOADate(), right: obsMax.ToOADate(), bottom: null, top: null);
+        var spanDays = Math.Max((obsMax - obsMin).TotalDays, 1);
+        var paddingDays = Math.Max(spanDays * 0.04, 0.5);
+        obsMin = obsMin.AddDays(-paddingDays);
+        obsMax = obsMax.AddDays(paddingDays);
+
+        plot.Axes.SetLimits(left: obsMin.ToOADate(), right: obsMax.ToOADate(), bottom: 0, top: 15);
 
         if (stats.AverageDurationHours is { } avgDur)
         {
@@ -218,7 +271,64 @@ public sealed class SleepChartRenderer
             annotation.Size = 12;
         }
 
+        if (hasInterruptionPoints || hasNoInterruptionPoints)
+        {
+            AddLegendOverlay(plot, obsMin, obsMax, hasInterruptionPoints, hasNoInterruptionPoints, hadInterruptionColor, noInterruptionColor);
+        }
+
         return plot.GetImageBytes(1000, 500, ImageFormat.Png);
+    }
+
+    private static void AddLegendOverlay(Plot plot, DateTime obsMin, DateTime obsMax, bool showInterruptions, bool showNoInterruptions, Color interruptionColor, Color noInterruptionColor)
+    {
+        var entries = new List<(string Label, Color Color)>
+        {
+            ("Had interruptions (blue)", interruptionColor),
+            ("No interruptions (orange)", noInterruptionColor)
+        };
+
+        if (!showInterruptions)
+            entries.RemoveAt(0);
+        if (!showNoInterruptions)
+            entries.RemoveAt(entries.Count - 1);
+
+        if (entries.Count == 0)
+            return;
+
+        var spanDays = Math.Max((obsMax - obsMin).TotalDays, 1);
+        var startX = obsMin.AddDays(Math.Max(spanDays * 0.02, 0.5)).ToOADate();
+        var textOffsetDays = Math.Max(spanDays * 0.015, 0.2);
+        var rowHeight = 0.8;
+        var topY = 14.2;
+
+        var backgroundWidthDays = Math.Max(spanDays * 0.25, 5);
+        var backgroundHeight = rowHeight * entries.Count + 0.8;
+
+        var xMin = startX - Math.Max(spanDays * 0.01, 0.2);
+        var xMax = startX + backgroundWidthDays;
+        var yMax = topY + 0.6;
+        var yMin = topY - backgroundHeight;
+
+        var legendBackground = plot.Add.Rectangle(xMin, xMax, yMin, yMax);
+        legendBackground.FillStyle.Color = Colors.White.WithOpacity(0.85);
+        legendBackground.LineStyle.Color = Colors.Black.WithOpacity(0.15);
+        legendBackground.LineStyle.Width = 1;
+
+        var title = plot.Add.Text("Legend", xMin + 0.2, yMax - 0.2);
+        title.Color = Colors.Black;
+        title.Size = 14;
+
+        var currentY = topY - 0.3;
+        foreach (var (label, color) in entries)
+        {
+            plot.Add.Marker(startX, currentY, MarkerShape.FilledCircle, 12, color);
+
+            var text = plot.Add.Text(label, startX + textOffsetDays, currentY);
+            text.Color = Colors.Black;
+            text.Size = 12;
+
+            currentY -= rowHeight;
+        }
     }
 
     private static string FormatStatsLine(string label, double? value)
@@ -226,9 +336,10 @@ public sealed class SleepChartRenderer
         if (!value.HasValue)
             return $"{label}: NA";
 
-        var hours = (int)Math.Truncate(value.Value);
-        var minutes = (int)Math.Round((value.Value - hours) * 60) % 60;
-        return $"{label}: {value.Value:F2} h ({hours}h {minutes:00}m)";
+        var totalMinutes = (int)Math.Round(value.Value * 60);
+        var hours = totalMinutes / 60;
+        var minutes = Math.Abs(totalMinutes % 60);
+        return $"{label}: {hours}h {minutes:00}m";
     }
 
     private static string FormatClockLine(string label, int? minutes)
@@ -267,5 +378,13 @@ public sealed class SleepChartRenderer
 
         var value = (minsFromMidnight.Value + deltaMinutes.Value) % (24 * 60);
         return (value + (24 * 60)) % (24 * 60);
+    }
+
+    private static string FormatCountLine(string label, double? value)
+    {
+        if (!value.HasValue)
+            return $"{label}: NA";
+
+        return $"{label}: {value.Value:F1}";
     }
 }

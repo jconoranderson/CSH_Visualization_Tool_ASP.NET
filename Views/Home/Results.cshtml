@@ -1,13 +1,15 @@
+@using System.Text.Json
 @model SleepVisualizationTool.Models.UploadResultViewModel
 @{
     ViewData["Title"] = "CSH Sleep Charts";
+    var jsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web);
 }
 
-<div class="container py-5">
-    <div class="row justify-content-center">
+<div class="container-fluid py-3 py-lg-4 px-3 px-lg-5">
+    <div class="row justify-content-center gx-4">
         <div class="col-12">
-            <h1 class="mb-3">Generated Sleep Charts</h1>
-            <p class="text-muted">Job ID: <code>@Model.JobId</code></p>
+            <h1 class="mb-2">Generated Sleep Charts</h1>
+            <p class="text-muted mb-3">Job ID: <code>@Model.JobId</code></p>
 
             <div class="mb-4 d-flex gap-2">
                 <a asp-action="DownloadAll" asp-route-jobId="@Model.JobId" class="btn btn-success">
@@ -18,7 +20,7 @@
 
             @if (Model.HasVisualizations)
             {
-                <section class="card mb-4">
+                <section class="card mb-4 shadow-sm visualizations-card">
                     <div class="card-body">
                         <h2 class="h5 mb-3">Interactive visualizations</h2>
                         <div class="row g-4 align-items-start flex-lg-nowrap">
@@ -81,7 +83,26 @@
                                             var windowHidden = wIndex == 0 ? string.Empty : "d-none";
                                             <div id="vis-panel-@index-window-@wIndex" class="window-panel @windowHidden">
                                                 <div class="chart-wrapper mb-3">
-                                                    <img src="@window.ChartDataUrl" class="img-fluid rounded border shadow-sm" alt="Sleep duration chart for @vis.Name (window @window.Label)" />
+                                                    @{
+                                                        var chartPayload = new
+                                                        {
+                                                            window.WindowStart,
+                                                            window.WindowEnd,
+                                                            window.Points,
+                                                            AverageDurationHours = window.Statistics?.AverageDurationHours
+                                                        };
+                                                        var chartJson = JsonSerializer.Serialize(chartPayload, jsonOptions);
+                                                    }
+                                                    <div class="chart-canvas-container">
+                                                        <canvas class="sleep-chart-canvas" aria-label="Sleep duration chart for @vis.Name (window @window.Label)"></canvas>
+                                                        <div class="chart-tooltip" role="tooltip" aria-hidden="true"></div>
+                                                        <script type="application/json" class="chart-data">
+                                                            @Html.Raw(chartJson)
+                                                        </script>
+                                                    </div>
+                                                    <noscript>
+                                                        <img src="@window.ChartDataUrl" class="img-fluid rounded border shadow-sm" alt="Sleep duration chart for @vis.Name (window @window.Label)" />
+                                                    </noscript>
                                                 </div>
                                                 <ul class="list-unstyled small mb-0">
                                                     @foreach (var line in window.SummaryLines)
@@ -104,6 +125,21 @@
                         const panels = document.querySelectorAll('.chart-panel');
                         const selectors = document.querySelectorAll('.window-selector');
                         const navButtons = document.querySelectorAll('.window-nav');
+                        const chartState = new WeakMap();
+                        const dateFormatter = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
+                        const dateTimeFormatter = new Intl.DateTimeFormat(undefined, {
+                            weekday: 'short',
+                            month: 'short',
+                            day: 'numeric',
+                            hour: 'numeric',
+                            minute: '2-digit'
+                        });
+                        const timeFormatter = new Intl.DateTimeFormat(undefined, {
+                            hour: 'numeric',
+                            minute: '2-digit'
+                        });
+
+                        document.querySelectorAll('.chart-canvas-container').forEach(container => attachTooltip(container));
 
                         function setWindow(personIndex, desiredIndex) {
                             const panel = document.querySelector(`.chart-panel[data-person="${personIndex}"]`);
@@ -129,6 +165,8 @@
                                     }
                                 }
                             }
+
+                            renderChartsInside(panel);
                         }
 
                         selectors.forEach(select => {
@@ -172,6 +210,7 @@
                                 const personIndex = target.dataset.person ?? '0';
                                 setWindow(personIndex, 0);
                                 target.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                                renderChartsInside(target);
                             }
                         }
 
@@ -193,6 +232,407 @@
                         } else if (buttons.length > 0) {
                             activate(buttons[0].dataset.target, buttons[0]);
                         }
+
+                        renderChartsInside(document);
+                        window.addEventListener('resize', () => renderChartsInside(document));
+
+                        function renderChartsInside(scope) {
+                            if (!scope || typeof scope.querySelectorAll !== 'function') return;
+                            const containers = scope.querySelectorAll('.chart-canvas-container');
+                            containers.forEach(container => renderChart(container));
+                        }
+
+                        function getChartData(container) {
+                            const cached = chartState.get(container);
+                            if (cached?.data) {
+                                return cached.data;
+                            }
+
+                            const payload = container.querySelector('.chart-data');
+                            if (!payload) return null;
+
+                            try {
+                                const parsed = JSON.parse(payload.textContent);
+                                const meta = cached ?? {};
+                                meta.data = parsed;
+                                chartState.set(container, meta);
+                                return parsed;
+                            } catch (err) {
+                                console.error('Failed to parse chart payload', err);
+                                return null;
+                            }
+                        }
+
+                        function renderChart(container) {
+                            const canvas = container.querySelector('canvas');
+                            const data = getChartData(container);
+                            if (!canvas || !data) return;
+
+                            const width = container.clientWidth;
+                            if (!width) {
+                                const meta = chartState.get(container) ?? {};
+                                meta.pending = true;
+                                chartState.set(container, meta);
+                                return;
+                            }
+
+                            const meta = chartState.get(container) ?? {};
+                            const height = 360;
+                            const dpr = window.devicePixelRatio || 1;
+                            canvas.width = Math.max(1, Math.round(width * dpr));
+                            canvas.height = Math.max(1, Math.round(height * dpr));
+                            canvas.style.width = `${width}px`;
+                            canvas.style.height = `${height}px`;
+
+                            const ctx = canvas.getContext('2d');
+                            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+                            ctx.clearRect(0, 0, width, height);
+
+                            const rawPoints = Array.isArray(data.points) ? data.points : [];
+                            const avgDuration = typeof data.averageDurationHours === 'number' ? data.averageDurationHours : null;
+                            const pointData = rawPoints
+                                .map(pt => {
+                                    const startRaw = pt.startDateTime ?? pt.start ?? '';
+                                    const endRaw = pt.endDateTime ?? pt.end ?? '';
+                                    const start = Date.parse(startRaw);
+                                    const duration = Number(pt.durationHours);
+                                    if (!Number.isFinite(start) || !Number.isFinite(duration)) {
+                                        return null;
+                                    }
+                                    const parsedEnd = Date.parse(endRaw);
+                                    let end = Number.isFinite(parsedEnd) ? parsedEnd : null;
+                                    if (!Number.isFinite(end) && Number.isFinite(duration)) {
+                                        end = start + duration * 60 * 60 * 1000;
+                                    }
+                                    return {
+                                        x: start,
+                                        date: new Date(start),
+                                        endDate: Number.isFinite(end) ? new Date(end) : null,
+                                        y: duration,
+                                        interruptions: typeof pt.interruptionCount === 'number' ? pt.interruptionCount : null,
+                                        avgLength: typeof pt.averageInterruptionLengthHours === 'number' ? pt.averageInterruptionLengthHours : null,
+                                        hasInterruptions: Boolean(pt.hasInterruptions)
+                                    };
+                                })
+                                .filter(Boolean);
+
+                            if (pointData.length === 0) {
+                                ctx.fillStyle = '#6c757d';
+                                ctx.font = '14px "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif';
+                                ctx.textAlign = 'center';
+                                ctx.fillText('No data available for this window.', width / 2, height / 2);
+                                chartState.set(container, { ...meta, pending: false, screenPoints: [] });
+                                return;
+                            }
+
+                            const yMin = 0;
+                            const yMax = 15;
+                            const margin = { top: 20, right: 20, bottom: 50, left: 60 };
+                            const plotWidth = Math.max(1, width - margin.left - margin.right);
+                            const plotHeight = Math.max(1, height - margin.top - margin.bottom);
+
+                            const explicitMin = Date.parse(data.windowStart ?? '');
+                            const explicitMax = Date.parse(data.windowEnd ?? '');
+                            let xMin = Number.isFinite(explicitMin) ? explicitMin : Math.min(...pointData.map(p => p.x));
+                            let xMax = Number.isFinite(explicitMax) ? explicitMax : Math.max(...pointData.map(p => p.x));
+                            if (xMin === xMax) {
+                                const padding = 1000 * 60 * 60 * 24 * 3;
+                                xMin -= padding;
+                                xMax += padding;
+                            }
+
+                            const span = Math.max(xMax - xMin, 1000 * 60 * 60 * 24);
+                            const xPadding = Math.max(span * 0.04, 1000 * 60 * 60 * 12);
+                            xMin -= xPadding;
+                            xMax += xPadding;
+
+                            const xScale = val => margin.left + ((val - xMin) / (xMax - xMin)) * plotWidth;
+                            const yScale = val => margin.top + plotHeight - ((val - yMin) / (yMax - yMin)) * plotHeight;
+
+                            drawAxes(ctx, {
+                                width,
+                                height,
+                                margin,
+                                plotWidth,
+                                plotHeight,
+                                yMin,
+                                yMax,
+                                xMin,
+                                xMax
+                            });
+
+                            const regression = computeRegression(pointData);
+
+                            const screenPoints = pointData.map(pt => ({
+                                screenX: xScale(pt.x),
+                                screenY: yScale(pt.y),
+                                raw: pt
+                            }));
+
+                            if (avgDuration !== null) {
+                                drawAverageLine(ctx, avgDuration, margin, plotWidth, yScale);
+                            }
+
+                            if (regression) {
+                                drawRegressionLine(ctx, regression, xMin, xMax, xScale, yScale);
+                            }
+
+                            ctx.strokeStyle = '#64B5F6';
+                            ctx.lineWidth = 2;
+                            ctx.beginPath();
+                            screenPoints.forEach((pt, idx) => {
+                                if (idx === 0) {
+                                    ctx.moveTo(pt.screenX, pt.screenY);
+                                } else {
+                                    ctx.lineTo(pt.screenX, pt.screenY);
+                                }
+                            });
+                            ctx.stroke();
+
+                            screenPoints.forEach(pt => {
+                                ctx.beginPath();
+                                ctx.arc(pt.screenX, pt.screenY, 4, 0, Math.PI * 2);
+                                ctx.fillStyle = pt.raw.hasInterruptions ? '#FB8C00' : '#1E88E5';
+                                ctx.fill();
+                                ctx.lineWidth = 1.2;
+                                ctx.strokeStyle = '#fff';
+                                ctx.stroke();
+                            });
+
+                            chartState.set(container, { ...meta, pending: false, screenPoints });
+                        }
+
+                        function drawAxes(ctx, config) {
+                            const { width, height, margin, plotWidth, plotHeight, yMin, yMax, xMin, xMax } = config;
+
+                            ctx.strokeStyle = '#cfd8dc';
+                            ctx.lineWidth = 1;
+                            ctx.beginPath();
+                            ctx.moveTo(margin.left, margin.top);
+                            ctx.lineTo(margin.left, margin.top + plotHeight);
+                            ctx.lineTo(margin.left + plotWidth, margin.top + plotHeight);
+                            ctx.stroke();
+
+                            ctx.font = '12px "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif';
+                            ctx.fillStyle = '#607d8b';
+                            ctx.textAlign = 'right';
+                            ctx.textBaseline = 'middle';
+
+                            for (let tick = yMin; tick <= yMax; tick += 3) {
+                                const yPos = margin.top + plotHeight - ((tick - yMin) / (yMax - yMin)) * plotHeight;
+                                ctx.strokeStyle = '#eceff1';
+                                ctx.beginPath();
+                                ctx.moveTo(margin.left, yPos);
+                                ctx.lineTo(margin.left + plotWidth, yPos);
+                                ctx.stroke();
+                                ctx.fillText(`${tick}`, margin.left - 8, yPos);
+                            }
+
+                            const candidateCount = Math.max(3, Math.floor(plotWidth / 80));
+                            ctx.textAlign = 'center';
+                            ctx.textBaseline = 'top';
+                            let lastLabelRight = -Infinity;
+                            for (let i = 0; i < candidateCount; i++) {
+                                const ratio = candidateCount === 1 ? 0.5 : i / (candidateCount - 1);
+                                const value = xMin + ratio * (xMax - xMin);
+                                const xPos = margin.left + ratio * plotWidth;
+                                const label = dateFormatter.format(new Date(value));
+                                const halfWidth = ctx.measureText(label).width / 2 + 6;
+                                if (xPos - halfWidth <= lastLabelRight) {
+                                    continue;
+                                }
+                                ctx.fillText(label, xPos, margin.top + plotHeight + 8);
+                                lastLabelRight = xPos + halfWidth;
+                            }
+                        }
+
+                        function drawAverageLine(ctx, value, margin, plotWidth, yScale) {
+                            if (!Number.isFinite(value)) return;
+                            ctx.save();
+                            ctx.strokeStyle = '#212121';
+                            ctx.lineWidth = 1.5;
+                            ctx.setLineDash([4, 4]);
+                            const y = yScale(value);
+                            ctx.beginPath();
+                            ctx.moveTo(margin.left, y);
+                            ctx.lineTo(margin.left + plotWidth, y);
+                            ctx.stroke();
+                            ctx.restore();
+                        }
+
+                        function drawRegressionLine(ctx, regression, xMin, xMax, xScale, yScale) {
+                            if (!regression) return;
+                            const { slope, intercept } = regression;
+                            if (!Number.isFinite(slope) || !Number.isFinite(intercept)) return;
+
+                            const y1 = slope * xMin + intercept;
+                            const y2 = slope * xMax + intercept;
+
+                            ctx.save();
+                            ctx.strokeStyle = '#F44336';
+                            ctx.lineWidth = 2;
+                            ctx.setLineDash([6, 6]);
+                            ctx.beginPath();
+                            ctx.moveTo(xScale(xMin), yScale(y1));
+                            ctx.lineTo(xScale(xMax), yScale(y2));
+                            ctx.stroke();
+                            ctx.restore();
+                        }
+
+                        function computeRegression(points) {
+                            if (!Array.isArray(points) || points.length < 2) return null;
+
+                            const xs = points.map(p => p.x);
+                            const ys = points.map(p => p.y);
+                            const meanX = xs.reduce((sum, val) => sum + val, 0) / xs.length;
+                            const meanY = ys.reduce((sum, val) => sum + val, 0) / ys.length;
+
+                            let numerator = 0;
+                            let denominator = 0;
+                            for (let i = 0; i < xs.length; i++) {
+                                const dx = xs[i] - meanX;
+                                numerator += dx * (ys[i] - meanY);
+                                denominator += dx * dx;
+                            }
+
+                            if (!Number.isFinite(numerator) || denominator === 0) {
+                                return null;
+                            }
+
+                            const slope = numerator / denominator;
+                            const intercept = meanY - slope * meanX;
+
+                            if (!Number.isFinite(slope) || !Number.isFinite(intercept)) {
+                                return null;
+                            }
+
+                            return { slope, intercept };
+                        }
+
+                        function attachTooltip(container) {
+                            if (!container || container.dataset.tooltipReady === '1') return;
+                            const canvas = container.querySelector('canvas');
+                            const tooltip = container.querySelector('.chart-tooltip');
+                            if (!canvas || !tooltip) return;
+
+                            container.dataset.tooltipReady = '1';
+                            canvas.addEventListener('mousemove', evt => handlePointer(container, canvas, tooltip, evt));
+                            canvas.addEventListener('mouseleave', () => hideTooltip(tooltip));
+                        }
+
+                        function handlePointer(container, canvas, tooltip, evt) {
+                            const meta = chartState.get(container);
+                            const points = meta?.screenPoints ?? [];
+                            if (!points.length) {
+                                hideTooltip(tooltip);
+                                return;
+                            }
+
+                            const rect = canvas.getBoundingClientRect();
+                            const x = evt.clientX - rect.left;
+                            const y = evt.clientY - rect.top;
+
+                            let closest = null;
+                            let minDistSq = Number.POSITIVE_INFINITY;
+                            points.forEach(pt => {
+                                const dx = pt.screenX - x;
+                                const dy = pt.screenY - y;
+                                const distSq = dx * dx + dy * dy;
+                                if (distSq < minDistSq) {
+                                    minDistSq = distSq;
+                                    closest = pt;
+                                }
+                            });
+
+                            if (!closest || Math.sqrt(minDistSq) > 12) {
+                                hideTooltip(tooltip);
+                                return;
+                            }
+
+                            showTooltip(tooltip, closest);
+                        }
+
+                        function showTooltip(tooltip, point) {
+                            const lines = [
+                                `<strong>${dateTimeFormatter.format(point.raw.date)}</strong>`,
+                                `Sleep: ${formatDuration(point.raw.y)}`,
+                                `Start: ${formatTime(point.raw.date)}`,
+                                `End: ${formatTime(point.raw.endDate)}`,
+                                `Interruptions: ${formatInterruptionCount(point.raw.interruptions, point.raw.hasInterruptions)}`,
+                                `Avg intr. length: ${formatAverageLength(point.raw.avgLength, point.raw.hasInterruptions)}`
+                            ];
+
+                            tooltip.innerHTML = lines.join('<br />');
+
+                            const container = tooltip.closest('.chart-canvas-container');
+                            const padding = 12;
+                            const containerWidth = container?.clientWidth ?? 0;
+                            const containerHeight = container?.clientHeight ?? 0;
+                            const tooltipWidth = tooltip.offsetWidth || 0;
+                            const tooltipHeight = tooltip.offsetHeight || 0;
+
+                            let translateX = -50;
+                            let left = point.screenX;
+                            if (containerWidth > 0 && tooltipWidth > 0) {
+                                if (point.screenX - tooltipWidth / 2 < padding) {
+                                    translateX = 0;
+                                    left = Math.max(padding, point.screenX);
+                                } else if (point.screenX + tooltipWidth / 2 > containerWidth - padding) {
+                                    translateX = -100;
+                                    left = Math.min(containerWidth - padding, point.screenX);
+                                }
+                            }
+
+                            let translateY = -120;
+                            let top = point.screenY;
+                            if (containerHeight > 0 && tooltipHeight > 0) {
+                                const projectedTop = point.screenY - (tooltipHeight * 1.2);
+                                if (projectedTop < padding) {
+                                    translateY = 10;
+                                }
+                            }
+
+                            tooltip.style.setProperty('--tooltip-translate-x', `${translateX}%`);
+                            tooltip.style.setProperty('--tooltip-translate-y', `${translateY}%`);
+                            tooltip.style.left = `${left}px`;
+                            tooltip.style.top = `${top}px`;
+                            tooltip.classList.add('visible');
+                            tooltip.setAttribute('aria-hidden', 'false');
+                        }
+
+                        function hideTooltip(tooltip) {
+                            tooltip.classList.remove('visible');
+                            tooltip.setAttribute('aria-hidden', 'true');
+                        }
+
+                        function formatDuration(hours) {
+                            if (!Number.isFinite(hours)) return 'NA';
+                            const totalMinutes = Math.round(hours * 60);
+                            const hh = Math.trunc(totalMinutes / 60);
+                            const mm = Math.abs(totalMinutes % 60);
+                            return `${hh}h ${mm.toString().padStart(2, '0')}m`;
+                        }
+
+                        function formatInterruptionCount(count, hasData) {
+                            if (typeof count === 'number') {
+                                return Number.isInteger(count) ? count.toString() : count.toFixed(1);
+                            }
+                            return hasData ? '≥1' : '0';
+                        }
+
+                        function formatAverageLength(value, hasData) {
+                            if (typeof value === 'number') {
+                                return formatDuration(value);
+                            }
+                            return hasData ? 'NA' : '—';
+                        }
+
+                        function formatTime(date) {
+                            if (!(date instanceof Date) || Number.isNaN(date.valueOf())) {
+                                return 'NA';
+                            }
+                            return timeFormatter.format(date);
+                        }
                     })();
                 </script>
 
@@ -208,9 +648,45 @@
                         border-radius: 0.75rem;
                     }
 
-                    .chart-wrapper img {
+                    .chart-canvas-container {
+                        position: relative;
+                        width: 100%;
+                    }
+
+                    .sleep-chart-canvas {
+                        width: 100%;
+                        height: 360px;
+                        display: block;
+                    }
+
+                    .chart-tooltip {
+                        position: absolute;
+                        background-color: rgba(33, 33, 33, 0.95);
+                        color: #fff;
+                        padding: 0.5rem 0.75rem;
+                        border-radius: 0.5rem;
+                        font-size: 0.85rem;
+                        pointer-events: none;
+                        transform: translate(var(--tooltip-translate-x, -50%), var(--tooltip-translate-y, -120%));
+                        opacity: 0;
+                        transition: opacity 0.15s ease-in-out;
+                        max-width: 260px;
+                        line-height: 1.35;
+                        box-shadow: 0 5px 15px rgba(0, 0, 0, 0.25);
+                    }
+
+                    .chart-tooltip.visible {
+                        opacity: 1;
+                    }
+
+                    .chart-wrapper noscript img {
                         width: 100%;
                         height: auto;
+                    }
+
+                    .visualizations-card {
+                        max-width: 1500px;
+                        margin: 0 auto;
                     }
 
                     @@media (max-width: 992px) {

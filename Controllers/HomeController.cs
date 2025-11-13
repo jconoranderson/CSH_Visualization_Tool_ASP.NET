@@ -95,24 +95,34 @@ public sealed class HomeController : Controller
                 var windowViewModels = new List<PersonVisualizationWindow>();
                 if (overview.HasChart)
                 {
+                    var overviewPoints = BuildPoints(personRecords);
                     windowViewModels.Add(new PersonVisualizationWindow
                     {
                         Index = 0,
                         Label = $"All history ({overview.WindowLabel})",
                         ChartDataUrl = overview.ChartDataUrl,
-                        SummaryLines = overview.SummaryLines
+                        SummaryLines = overview.SummaryLines,
+                        WindowStart = overview.WindowStart,
+                        WindowEnd = overview.WindowEnd,
+                        Points = overviewPoints,
+                        Statistics = overview.Statistics
                     });
                 }
 
                 var nextIndex = windowViewModels.Count;
                 foreach (var segment in windowSegments)
                 {
+                    var windowPoints = BuildPoints(personRecords, segment.WindowStart, segment.WindowEnd);
                     windowViewModels.Add(new PersonVisualizationWindow
                     {
                         Index = nextIndex++,
                         Label = segment.WindowLabel,
                         ChartDataUrl = $"data:image/png;base64,{Convert.ToBase64String(segment.ChartImage)}",
-                        SummaryLines = segment.SummaryLines
+                        SummaryLines = segment.SummaryLines,
+                        WindowStart = segment.WindowStart,
+                        WindowEnd = segment.WindowEnd,
+                        Points = windowPoints,
+                        Statistics = segment.Statistics
                     });
                 }
 
@@ -220,5 +230,35 @@ public sealed class HomeController : Controller
     public IActionResult Error()
     {
         return View(new ErrorViewModel { RequestId = Activity.Current?.Id ?? HttpContext.TraceIdentifier });
+    }
+
+    private static IReadOnlyList<SleepChartPoint> BuildPoints(IEnumerable<SleepRecord> records)
+    {
+        return records
+            .OrderBy(r => r.StartDateTime)
+            .Select(CreatePoint)
+            .ToList();
+    }
+
+    private static IReadOnlyList<SleepChartPoint> BuildPoints(IEnumerable<SleepRecord> records, DateTime windowStart, DateTime windowEnd)
+    {
+        return records
+            .Where(r => r.StartDateTime.Date >= windowStart.Date && r.StartDateTime.Date <= windowEnd.Date)
+            .OrderBy(r => r.StartDateTime)
+            .Select(CreatePoint)
+            .ToList();
+    }
+
+    private static SleepChartPoint CreatePoint(SleepRecord record)
+    {
+        return new SleepChartPoint
+        {
+            StartDateTime = record.StartDateTime,
+            EndDateTime = record.GetSleepEnd(),
+            DurationHours = record.DurationHours,
+            InterruptionCount = record.GetInterruptionCount(),
+            AverageInterruptionLengthHours = record.AverageInterruptionLengthHours(),
+            HasInterruptions = record.HasInterruptionEvidence()
+        };
     }
 }

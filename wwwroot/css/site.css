@@ -21,6 +21,10 @@ body {
   margin-bottom: 60px;
 }
 
+.container-wide {
+  max-width: calc(1320px + 2in);
+}
+
 .form-floating > .form-control-plaintext::placeholder, .form-floating > .form-control::placeholder {
   color: var(--bs-secondary-color);
   text-align: end;
